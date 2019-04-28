@@ -84,11 +84,11 @@ void destroy_vk_logicdev(vk_logicdev_t logicdev);
 
 typedef struct {
   VkSwapchainKHR handle;
-  //ToDo: Extract the necessary crap from this and get rid of it
-  VkSwapchainCreateInfoKHR info;
-  vk_logicdev_t logicdev;
+  VkFormat image_format;
+  VkExtent2D image_extent;
   uint32_t image_count;
   VkImage *image_handles;
+  vk_logicdev_t logicdev;
 } vk_swapchain_t;
 
 int init_vk_swapchain(

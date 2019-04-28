@@ -622,44 +622,46 @@ int init_vk_swapchain(
 ) {
   swapchain->image_handles = NULL;
   swapchain->logicdev = logicdev;
+  VkColorSpaceKHR color_space;
   if(
     seldev.formats_count == 1 &&
     seldev.formats[0].format == VK_FORMAT_UNDEFINED
   ) {
-    swapchain->info.imageFormat = VK_FORMAT_B8G8R8A8_UNORM;
-    swapchain->info.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    swapchain->image_format = VK_FORMAT_B8G8R8A8_UNORM;
+    color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
   } else {
-    swapchain->info.imageFormat = seldev.formats[0].format;
-    swapchain->info.imageColorSpace = seldev.formats[0].colorSpace;
+    swapchain->image_format = seldev.formats[0].format;
+    color_space = seldev.formats[0].colorSpace;
     for(unsigned int i = 0; i < seldev.formats_count; i++) {
       if(
         seldev.formats[i].format == VK_FORMAT_B8G8R8A8_UNORM &&
         seldev.formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR
       ) {
-        swapchain->info.imageFormat = VK_FORMAT_B8G8R8A8_UNORM;
-        swapchain->info.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+        swapchain->image_format = VK_FORMAT_B8G8R8A8_UNORM;
+        color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
         break;
       }
     }
   }
-  swapchain->info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+
+  VkPresentModeKHR pmode = VK_PRESENT_MODE_FIFO_KHR;
   for(unsigned int i = 0; i < seldev.pmodes_count; i++) {
     log_trace(
       "Discovered the following Present Mode: %s",
       pmode2str(seldev.pmodes[i])
     );
     if(seldev.pmodes[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
-      swapchain->info.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+      pmode = VK_PRESENT_MODE_MAILBOX_KHR;
       break;
     } else if(seldev.pmodes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR)
-      swapchain->info.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+      pmode = VK_PRESENT_MODE_IMMEDIATE_KHR;
   }
   log_trace(
     "Selected the %s Present Mode",
-    pmode2str(swapchain->info.presentMode)
+    pmode2str(pmode)
   );
   if(seldev.caps.currentExtent.width != UINT32_MAX) {
-    swapchain->info.imageExtent = seldev.caps.currentExtent;
+    swapchain->image_extent = seldev.caps.currentExtent;
   } else {
     //UINT32_MAX means the WM is telling us to wing it, so we try to meet the
     //glfw framebuffer size, limited by the device capabilities.
@@ -673,34 +675,39 @@ int init_vk_swapchain(
       h : seldev.caps.maxImageExtent.height;
     h = h > seldev.caps.minImageExtent.height ?
       h : seldev.caps.maxImageExtent.height;
-    swapchain->info.imageExtent.width = w;
-    swapchain->info.imageExtent.height = h;
+    swapchain->image_extent.width = w;
+    swapchain->image_extent.height = h;
   }
   //See:
   //https://github.com/KhronosGroup/Vulkan-Docs/blob/master/appendices/VK_KHR_swapchain.txt#L231
   if(
-    swapchain->info.presentMode == VK_PRESENT_MODE_MAILBOX_KHR &&
+    pmode == VK_PRESENT_MODE_MAILBOX_KHR &&
     seldev.caps.minImageCount != seldev.caps.maxImageCount
-  ) swapchain->info.minImageCount = seldev.caps.minImageCount + 1;
-  else swapchain->info.minImageCount = seldev.caps.minImageCount;
-
-  swapchain->info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-  swapchain->info.pNext = NULL;
-  swapchain->info.flags = 0;
-  swapchain->info.surface = surface.handle;
-  swapchain->info.imageArrayLayers = 1;
-  swapchain->info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-  swapchain->info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-  swapchain->info.queueFamilyIndexCount = 0;
-  swapchain->info.pQueueFamilyIndices = NULL;
-  swapchain->info.preTransform = seldev.caps.currentTransform;
-  swapchain->info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-  swapchain->info.clipped = VK_TRUE;
-  swapchain->info.oldSwapchain = VK_NULL_HANDLE;
+  ) swapchain->image_count = seldev.caps.minImageCount + 1;
+  else swapchain->image_count = seldev.caps.minImageCount;
 
   VkResult err = vkCreateSwapchainKHR(
     logicdev.handle,
-    &swapchain->info,
+    &(const VkSwapchainCreateInfoKHR) {
+      .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+      .pNext = NULL,
+      .flags = 0,
+      .surface = surface.handle,
+      .minImageCount = swapchain->image_count,
+      .imageFormat = swapchain->image_format,
+      .imageColorSpace = color_space,
+      .imageExtent = swapchain->image_extent,
+      .imageArrayLayers = 1,
+      .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+      .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+      .queueFamilyIndexCount = 0,
+      .pQueueFamilyIndices = NULL,
+      .preTransform = seldev.caps.currentTransform,
+      .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+      .presentMode = pmode,
+      .clipped = VK_TRUE,
+      .oldSwapchain = VK_NULL_HANDLE
+    },
     NULL,
     &swapchain->handle
   );
@@ -759,7 +766,7 @@ int init_vk_imageviews(vk_imageviews_t *imageviews, vk_swapchain_t swapchain) {
         .flags = 0,
         .image = swapchain.image_handles[i],
         .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format = swapchain.info.imageFormat,
+        .format = swapchain.image_format,
         .components = (const VkComponentMapping) {
           .r = VK_COMPONENT_SWIZZLE_IDENTITY,
           .g = VK_COMPONENT_SWIZZLE_IDENTITY,
@@ -811,7 +818,7 @@ int init_vk_renderpass(vk_renderpass_t *renderpass, vk_swapchain_t swapchain) {
       .attachmentCount = 1,
       .pAttachments = &(const VkAttachmentDescription) {
         .flags = 0,
-        .format = swapchain.info.imageFormat,
+        .format = swapchain.image_format,
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
@@ -985,15 +992,15 @@ int init_vk_gpipe(
         .pViewports = &(const VkViewport) {
           .x = 0.0f,
           .y = 0.0f,
-          .width = (float) swapchain.info.imageExtent.width,
-          .height = (float) swapchain.info.imageExtent.height,
+          .width = (float) swapchain.image_extent.width,
+          .height = (float) swapchain.image_extent.height,
           .minDepth = 0.0f,
           .maxDepth = 1.0f
         },
         .scissorCount = 1,
         .pScissors = &(const VkRect2D) {
           .offset = {0, 0},
-          .extent = swapchain.info.imageExtent
+          .extent = swapchain.image_extent
         },
       },
       .pRasterizationState = &(const VkPipelineRasterizationStateCreateInfo) {
@@ -1103,8 +1110,8 @@ int init_vk_framebuffers(
         .renderPass = renderpass.handle,
         .attachmentCount = 1,
         .pAttachments = &imageviews.handles[i],
-        .width = swapchain.info.imageExtent.width,
-        .height = swapchain.info.imageExtent.height,
+        .width = swapchain.image_extent.width,
+        .height = swapchain.image_extent.height,
         .layers = 1
       },
       NULL,
@@ -1217,7 +1224,7 @@ int init_vk_commandbuffers(
         .framebuffer = framebuffers.handles[i],
         .renderArea = (const VkRect2D) {
           .offset = {0, 0},
-          .extent = swapchain.info.imageExtent
+          .extent = swapchain.image_extent
         },
         .clearValueCount = 1,
         //VkClearValue is a union with another nested union, which functionally
@@ -1500,7 +1507,7 @@ int rebuild_vk_swapchain(vgfx_vk_t *vk) {
   destroy_vk_commandbuffers(vk->commandbuffers);
   destroy_vk_framebuffers(vk->framebuffers);
   destroy_vk_imageviews(vk->imageviews);
-  const VkFormat old_format = vk->swapchain.info.imageFormat;
+  const VkFormat old_format = vk->swapchain.image_format;
   destroy_vk_swapchain(vk->swapchain);
 
   if(init_vk_swapchain(
@@ -1514,7 +1521,7 @@ int rebuild_vk_swapchain(vgfx_vk_t *vk) {
     goto borked;
   }
   //Renderpass and gpipe depend on image formats remaining constant
-  if(vk->swapchain.info.imageFormat != old_format) {
+  if(vk->swapchain.image_format != old_format) {
     destroy_vk_gpipe(vk->gpipe);
     destroy_vk_renderpass(vk->renderpass);
     if(init_vk_renderpass(&vk->renderpass, vk->swapchain))
