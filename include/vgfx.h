@@ -84,6 +84,7 @@ void destroy_vk_logicdev(vk_logicdev_t logicdev);
 
 typedef struct {
   VkSwapchainKHR handle;
+  //ToDo: Extract the necessary crap from this and get rid of it
   VkSwapchainCreateInfoKHR info;
   vk_logicdev_t logicdev;
   uint32_t image_count;
@@ -201,6 +202,7 @@ int init_vk_syncobjects(
 void destroy_vk_syncobjects(vk_syncobjects_t syncobjects);
 
 typedef struct {
+  unsigned int resized;
   uint32_t max_fif;
   vk_instance_t instance;
   vk_surface_t surface;
@@ -219,3 +221,5 @@ typedef struct {
 
 int init_vk(vgfx_vk_t *vk, GLFWwindow *window, uint32_t max_fif);
 void destroy_vk(vgfx_vk_t vk);
+
+int rebuild_vk_swapchain(vgfx_vk_t *vk);

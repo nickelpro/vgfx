@@ -644,7 +644,7 @@ int init_vk_swapchain(
   }
   swapchain->info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
   for(unsigned int i = 0; i < seldev.pmodes_count; i++) {
-    log_debug(
+    log_trace(
       "Discovered the following Present Mode: %s",
       pmode2str(seldev.pmodes[i])
     );
@@ -654,13 +654,15 @@ int init_vk_swapchain(
     } else if(seldev.pmodes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR)
       swapchain->info.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
   }
-  log_debug(
+  log_trace(
     "Selected the %s Present Mode",
     pmode2str(swapchain->info.presentMode)
   );
   if(seldev.caps.currentExtent.width != UINT32_MAX) {
     swapchain->info.imageExtent = seldev.caps.currentExtent;
   } else {
+    //UINT32_MAX means the WM is telling us to wing it, so we try to meet the
+    //glfw framebuffer size, limited by the device capabilities.
     uint32_t w, h;
     glfwGetFramebufferSize(surface.window, (int *) &w, (int *) &h);
     w = w < seldev.caps.maxImageExtent.width ?
@@ -674,6 +676,8 @@ int init_vk_swapchain(
     swapchain->info.imageExtent.width = w;
     swapchain->info.imageExtent.height = h;
   }
+  //See:
+  //https://github.com/KhronosGroup/Vulkan-Docs/blob/master/appendices/VK_KHR_swapchain.txt#L231
   if(
     swapchain->info.presentMode == VK_PRESENT_MODE_MAILBOX_KHR &&
     seldev.caps.minImageCount != seldev.caps.maxImageCount
@@ -1360,6 +1364,7 @@ void destroy_vk_syncobjects(vk_syncobjects_t syncobjects) {
 }
 
 int init_vk(vgfx_vk_t *vk, GLFWwindow *window, uint32_t max_fif) {
+  vk->resized = 0;
   vk->max_fif = max_fif;
   if(init_vk_instance(&vk->instance, 1)) {
     log_error("Failed to init instance");
@@ -1473,4 +1478,79 @@ void destroy_vk(vgfx_vk_t vk) {
   destroy_vk_devices(vk.devices);
   destroy_vk_surface(vk.surface, vk.instance);
   destroy_vk_instance(vk.instance);
+}
+
+
+//Generally for a window resize
+//ToDo: We're free'ing and allocating a bunch of handles here by using the
+//init/destroy functions. Probably should make those granular to allow for
+//resources to be reused.
+int rebuild_vk_swapchain(vgfx_vk_t *vk) {
+  vk->resized = 0;
+  vkDeviceWaitIdle(vk->logicdev.handle);
+  //destroy_vk_commandbuffers assumes this free will be done when the command
+  //pool is freed. We're not freeing the command pool, so we need to free the
+  //buffers before freeing the handles.
+  vkFreeCommandBuffers(
+    vk->logicdev.handle,
+    vk->commandpool.handle,
+    vk->commandbuffers.count,
+    vk->commandbuffers.handles
+  );
+  destroy_vk_commandbuffers(vk->commandbuffers);
+  destroy_vk_framebuffers(vk->framebuffers);
+  destroy_vk_imageviews(vk->imageviews);
+  const VkFormat old_format = vk->swapchain.info.imageFormat;
+  destroy_vk_swapchain(vk->swapchain);
+
+  if(init_vk_swapchain(
+    &vk->swapchain,
+    vk->surface,
+    vk->seldev,
+    vk->logicdev)
+  ) {
+    destroy_vk_gpipe(vk->gpipe);
+    destroy_vk_renderpass(vk->renderpass);
+    goto borked;
+  }
+  //Renderpass and gpipe depend on image formats remaining constant
+  if(vk->swapchain.info.imageFormat != old_format) {
+    destroy_vk_gpipe(vk->gpipe);
+    destroy_vk_renderpass(vk->renderpass);
+    if(init_vk_renderpass(&vk->renderpass, vk->swapchain))
+      goto cleanup_swapchain;
+    if(init_vk_gpipe(&vk->gpipe, vk->swapchain, vk->renderpass))
+      goto cleanup_renderpass;
+  }
+  if(init_vk_imageviews(&vk->imageviews, vk->swapchain))
+    goto cleanup_gpipe;
+  if(init_vk_framebuffers(
+    &vk->framebuffers,
+    vk->swapchain,
+    vk->renderpass,
+    vk->imageviews
+  )) goto cleanup_imageviews;
+  if(init_vk_commandbuffers(
+    &vk->commandbuffers,
+    vk->swapchain,
+    vk->renderpass,
+    vk->gpipe,
+    vk->framebuffers,
+    vk->commandpool
+  )) goto cleanup_framebuffers;
+  return VGFX_SUCCESS;
+
+  cleanup_framebuffers:
+    destroy_vk_framebuffers(vk->framebuffers);
+  cleanup_imageviews:
+    destroy_vk_imageviews(vk->imageviews);
+  cleanup_gpipe:
+    destroy_vk_gpipe(vk->gpipe);
+  cleanup_renderpass:
+    destroy_vk_renderpass(vk->renderpass);
+  cleanup_swapchain:
+    destroy_vk_swapchain(vk->swapchain);
+  borked:
+    log_error("Swapchain recreation failed");
+    return VGFX_FAIL;
 }
