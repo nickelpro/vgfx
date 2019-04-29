@@ -122,15 +122,14 @@ int main(int argc, char const *argv[]) {
     log_error("Window creation failed");
     return VGFX_FAIL;
   }
-  glfwMakeContextCurrent(window);
-  glfwSetWindowSizeCallback(window, glfw_size_cb);
+
   vgfx_vk_t vk;
   if(init_vk(&vk, window, 2)) {
     log_error("init_vk failed");
     return VGFX_FAIL;
   }
   glfwSetWindowUserPointer(window, &vk);
-
+  glfwSetWindowSizeCallback(window, glfw_size_cb);
   while(!glfwWindowShouldClose(window)) {
     glfwPollEvents();
     if(draw_frame(&vk)) {
