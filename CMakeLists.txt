@@ -22,12 +22,20 @@ function(target_build_shaders target)
     endforeach(shader_in)
 endfunction(target_build_shaders)
 
+find_path(
+    graphene_config "graphene-config.h"
+    HINTS "/usr/lib/graphene-1.0/include"
+)
 add_executable(main "src/main.c")
 target_compile_options(main PRIVATE -Wall -Wpedantic)
-target_sources(main PRIVATE "src/vk.c" "src/log.c" "src/sds.c")
-target_include_directories(
-    main
-    PRIVATE "include"
+target_sources(main PRIVATE
+    "src/vk.c" "src/log.c"
+    "src/sds.c" "src/verts.c"
+    "src/vk_mem_alloc.cpp"
+    "include/vgfx.h" "include/logc/log.h"
+)
+target_include_directories(main PRIVATE
+    "include" ${graphene_config}
 )
 target_link_libraries(main glfw dl graphene-1.0 m vulkan)
 target_build_shaders(main "shaders/shader.vert" "shaders/shader.frag")

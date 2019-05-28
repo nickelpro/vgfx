@@ -53,7 +53,7 @@ int draw_frame(vgfx_vk_t *vk) {
     &vk->syncobjects.in_flight[current_frame]
   );
   err = vkQueueSubmit(
-    vk->logicdev.q,
+    vk->logicdev.gfx_q,
     1,
     &(const VkSubmitInfo) {
       .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -73,7 +73,7 @@ int draw_frame(vgfx_vk_t *vk) {
   if(err != VK_SUCCESS) goto borked;
 
   err = vkQueuePresentKHR(
-    vk->logicdev.q,
+    vk->logicdev.gfx_q,
     &(const VkPresentInfoKHR) {
       .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
       .pNext = NULL,
@@ -94,8 +94,7 @@ int draw_frame(vgfx_vk_t *vk) {
   current_frame = (current_frame + 1) % vk->max_fif;
   return VGFX_SUCCESS;
   resize:
-    rebuild_vk_swapchain(vk);
-    return VGFX_SUCCESS;
+    return rebuild_vk_swapchain(vk);
   borked:
     log_error("Failed to draw frame: %s", vkr2str(err));
     return VGFX_FAIL;

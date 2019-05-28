@@ -116,7 +116,7 @@ int read_spirv(vk_spirvbuf_t *buf, const char *path) {
   if(!f) goto failed_open;
   if(fseek(f, 0, SEEK_END)) goto borked;
   long length = ftell(f);
-  if(length < 0 || (length % 4)) goto borked;
+  if(length <= 0 || (length % 4)) goto borked;
   if(!(buf->base = malloc(length))) goto borked;
   if(fseek(f, 0, SEEK_SET)) goto borked;
   if(fread((char *) buf->base, 1, length, f) != (size_t) length) goto borked;
@@ -212,7 +212,7 @@ int get_vk_validation(uint32_t *layer_count, VkLayerProperties *layer_props) {
       s = sdscatfmt(s, "\n\t%s", layer_props[i].layerName);
       if(!strcmp(
         layer_props[i].layerName,
-        "VK_LAYER_LUNARG_standard_validation"
+        "VK_LAYER_KHRONOS_validation"
       )) found_lunarg_validation = 1;
     }
     log_debug(s);
@@ -250,7 +250,7 @@ int init_vk_instance(vk_instance_t *instance, int use_validation) {
     free(layer_props);
     if(ret == VGFX_SUCCESS) {
       layers.count = 1;
-      layers.names = &(const char *) {"VK_LAYER_LUNARG_standard_validation"};
+      layers.names = &(const char *) {"VK_LAYER_KHRONOS_validation"};
       tot_exts.names = malloc(++tot_exts.count * sizeof(*tot_exts.names));
       if(!tot_exts.names) {
         log_error("Failed to allocate memory for tot_exts.names");
@@ -264,7 +264,7 @@ int init_vk_instance(vk_instance_t *instance, int use_validation) {
       tot_exts.names[req_exts.count] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
     } else {
       layers.count = 0;
-      log_error("No lunarg validation layer found");
+      log_error("No vulkan validation layer found");
     }
   }
 
@@ -300,12 +300,12 @@ int init_vk_instance(vk_instance_t *instance, int use_validation) {
         .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
         .pNext = NULL,
         .flags = 0,
-        .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT     \
-                         | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT        \
-                         | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT     \
+        .messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT    \
+                         | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT       \
+                         | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT    \
                          | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-        .messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT             \
-                     | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT          \
+        .messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT            \
+                     | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT         \
                      | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
         .pfnUserCallback = vk_debug_cb,
         .pUserData = NULL
@@ -350,75 +350,75 @@ void destroy_vk_surface(vk_surface_t surface, vk_instance_t instance) {
   vkDestroySurfaceKHR(instance.handle, surface.handle, NULL);
 }
 
-int init_vk_devices(vk_devices_t *devices, vk_instance_t instance) {
-  *devices = (const vk_devices_t) { 0 };
+int init_vk_phydevs(vk_phydevs_t *phydevs, vk_instance_t instance) {
+  *phydevs = (const vk_phydevs_t) { 0 };
   sds s = sdsnew("Discovered the following devices:");
   VkResult err = vkEnumeratePhysicalDevices(
     instance.handle,
-    &devices->count,
+    &phydevs->count,
     NULL
   );
   if(err != VK_SUCCESS) goto borked;
-  if(!devices->count) {
+  if(!phydevs->count) {
     log_error("Vulkan reports no available physical devices");
     return VGFX_FAIL;
   }
 
-  devices->handles = malloc(devices->count * sizeof(*devices->handles));
-  if(!devices->handles) goto borked_malloc;
-  devices->props = malloc(devices->count * sizeof(*devices->props));
-  if(!devices->props) goto borked_malloc;
-  devices->feats = malloc(devices->count * sizeof(*devices->feats));
-  if(!devices->feats) goto borked_malloc;
-  if((devices->qfams = malloc(devices->count * sizeof(*devices->qfams))))
-    for(unsigned int i = 0; i < devices->count; i++)
-      devices->qfams[i].props = NULL;
+  phydevs->handles = malloc(phydevs->count * sizeof(*phydevs->handles));
+  if(!phydevs->handles) goto borked_malloc;
+  phydevs->props = malloc(phydevs->count * sizeof(*phydevs->props));
+  if(!phydevs->props) goto borked_malloc;
+  phydevs->feats = malloc(phydevs->count * sizeof(*phydevs->feats));
+  if(!phydevs->feats) goto borked_malloc;
+  if((phydevs->qfams = malloc(phydevs->count * sizeof(*phydevs->qfams))))
+    for(unsigned int i = 0; i < phydevs->count; i++)
+      phydevs->qfams[i].props = NULL;
   else goto borked_malloc;
-  if((devices->exts = malloc(devices->count * sizeof(*devices->exts))))
-    for(unsigned int i = 0; i < devices->count; i++)
-      devices->exts[i].props = NULL;
+  if((phydevs->exts = malloc(phydevs->count * sizeof(*phydevs->exts))))
+    for(unsigned int i = 0; i < phydevs->count; i++)
+      phydevs->exts[i].props = NULL;
   else goto borked_malloc;
 
   err = vkEnumeratePhysicalDevices(
     instance.handle,
-    &devices->count,
-    devices->handles
+    &phydevs->count,
+    phydevs->handles
   );
   if(err != VK_SUCCESS) goto borked;
-  for(unsigned int i = 0; i < devices->count; i++) {
-    vkGetPhysicalDeviceProperties(devices->handles[i], &devices->props[i]);
-    vkGetPhysicalDeviceFeatures(devices->handles[i], &devices->feats[i]);
+  for(unsigned int i = 0; i < phydevs->count; i++) {
+    vkGetPhysicalDeviceProperties(phydevs->handles[i], &phydevs->props[i]);
+    vkGetPhysicalDeviceFeatures(phydevs->handles[i], &phydevs->feats[i]);
     vkGetPhysicalDeviceQueueFamilyProperties(
-      devices->handles[i],
-      &devices->qfams[i].count,
+      phydevs->handles[i],
+      &phydevs->qfams[i].count,
       NULL
     );
-    devices->qfams[i].props = malloc(
-      devices->qfams[i].count * sizeof(*devices->qfams[i].props)
+    phydevs->qfams[i].props = malloc(
+      phydevs->qfams[i].count * sizeof(*phydevs->qfams[i].props)
     );
-    if(!devices->qfams[i].props) goto borked_malloc;
+    if(!phydevs->qfams[i].props) goto borked_malloc;
     vkGetPhysicalDeviceQueueFamilyProperties(
-      devices->handles[i],
-      &devices->qfams[i].count,
-      devices->qfams[i].props
+      phydevs->handles[i],
+      &phydevs->qfams[i].count,
+      phydevs->qfams[i].props
     );
-    s = sdscatfmt(s, "\n\t%s", devices->props[i].deviceName);
+    s = sdscatfmt(s, "\n\t%s", phydevs->props[i].deviceName);
     err = vkEnumerateDeviceExtensionProperties(
-      devices->handles[i],
+      phydevs->handles[i],
       NULL,
-      &devices->exts[i].count,
+      &phydevs->exts[i].count,
       NULL
     );
     if(err != VK_SUCCESS) goto borked;
-    devices->exts[i].props = malloc(
-      devices->exts[i].count * sizeof(*devices->exts[i].props)
+    phydevs->exts[i].props = malloc(
+      phydevs->exts[i].count * sizeof(*phydevs->exts[i].props)
     );
-    if(!devices->exts[i].props) goto borked_malloc;
+    if(!phydevs->exts[i].props) goto borked_malloc;
     err = vkEnumerateDeviceExtensionProperties(
-      devices->handles[i],
+      phydevs->handles[i],
       NULL,
-      &devices->exts[i].count,
-      devices->exts[i].props
+      &phydevs->exts[i].count,
+      phydevs->exts[i].props
     );
     if(err != VK_SUCCESS) goto borked;
   }
@@ -428,63 +428,96 @@ int init_vk_devices(vk_devices_t *devices, vk_instance_t instance) {
   return VGFX_SUCCESS;
   borked_malloc:
     log_error("Failed to allocate memory for devices");
-    destroy_vk_devices(*devices);
+    destroy_vk_phydevs(*phydevs);
     sdsfree(s);
     return VGFX_MEM_FAIL;
   borked:
     log_error("Vulkan device enumeration failed on: %s", vkr2str(err));
-    destroy_vk_devices(*devices);
+    destroy_vk_phydevs(*phydevs);
     sdsfree(s);
     return VGFX_FAIL;
 }
 
-void destroy_vk_devices(vk_devices_t devices) {
-  free(devices.handles);
-  free(devices.props);
-  free(devices.feats);
-  for(unsigned int i = 0; i < devices.count; i++) {
-    free(devices.qfams[i].props);
-    free(devices.exts[i].props);
+void destroy_vk_phydevs(vk_phydevs_t phydevs) {
+  free(phydevs.handles);
+  free(phydevs.props);
+  free(phydevs.feats);
+  for(unsigned int i = 0; i < phydevs.count; i++) {
+    free(phydevs.qfams[i].props);
+    free(phydevs.exts[i].props);
   }
-  free(devices.qfams);
-  free(devices.exts);
+  free(phydevs.qfams);
+  free(phydevs.exts);
+}
+
+int select_vk_queues(
+  VkPhysicalDevice handle,
+  vk_qfamilies_t qfams,
+  VkSurfaceKHR surf_handle,
+  uint32_t *gfx_qfam,
+  uint32_t *xfr_qfam
+) {
+  VkResult err;
+  *gfx_qfam = UINT32_MAX;
+  *xfr_qfam = UINT32_MAX;
+  for(unsigned int i = 0; i < qfams.count; i++) {
+    VkBool32 surface_support;
+    err = vkGetPhysicalDeviceSurfaceSupportKHR(
+      handle,
+      i,
+      surf_handle,
+      &surface_support
+    );
+    if(err != VK_SUCCESS) goto borked;
+    if(
+      qfams.props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT &&
+      surface_support == VK_TRUE
+    ) {
+      *gfx_qfam = i;
+    } else if( //Look for a dedicated transfer queue
+      qfams.props[i].queueFlags & VK_QUEUE_TRANSFER_BIT &&
+      !(qfams.props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
+      !(qfams.props[i].queueFlags & VK_QUEUE_COMPUTE_BIT)
+    ) {
+      *xfr_qfam = i;
+    }
+  }
+  if(*gfx_qfam == UINT32_MAX) return VGFX_NO_GRAPHICS_QUEUE;
+  // If there isn't a dedicated transfer queue family, just use the graphics
+  // queue family
+  if(*xfr_qfam == UINT32_MAX) *xfr_qfam = *gfx_qfam;
+  return VGFX_SUCCESS;
+  borked:
+    log_error("Vulkan queue selection failed on: %s", vkr2str(err));
+    return VGFX_FAIL;
 }
 
 //Select a device and queue family for a given surface
 int init_vk_seldev(
   vk_seldev_t *seldev,
-  vk_devices_t devices,
+  vk_phydevs_t phydevs,
   vk_surface_t surface
 ) {
   VkResult err;
-  int success;
+  int success = 0;
   *seldev = (const vk_seldev_t) {0};
-  for(unsigned int i = 0, j; i < devices.count; i++) {
-    for(j = 0, success = 0; j < devices.qfams[i].count; j++) {
-      VkBool32 surface_support;
-      err = vkGetPhysicalDeviceSurfaceSupportKHR(
-        devices.handles[i],
-        j,
-        surface.handle,
-        &surface_support
-      );
-      if(err != VK_SUCCESS) goto borked;
-      if(
-        devices.qfams[i].props[j].queueFlags & VK_QUEUE_GRAPHICS_BIT &&
-        surface_support == VK_TRUE //Supposedly this implies swapchain support
-      ) {
-        seldev->qfam_idx = j;
-        seldev->qfam_props = devices.qfams[i].props[j];
-        success = 1;
-        break;
-      }
-    }
-    if(!success) continue;
+  for(unsigned int i = 0; i < phydevs.count; i++) {
+    int ret = select_vk_queues(
+      phydevs.handles[i],
+      phydevs.qfams[i],
+      surface.handle,
+      &seldev->gfx_qfam,
+      &seldev->xfr_qfam
+    );
+    if(ret == VGFX_NO_GRAPHICS_QUEUE) continue;
+    if(ret == VGFX_FAIL) return VGFX_FAIL;
+    seldev->gfx_props = phydevs.qfams[i].props[seldev->gfx_qfam];
+    seldev->xfr_props = phydevs.qfams[i].props[seldev->xfr_qfam];
 
     //Explicitly verify swapchain support
-    for(j = 0, success = 0; j < devices.exts[i].count; j++) {
+    for(unsigned int j = 0; j < phydevs.exts[i].count; j++) {
       if(!strcmp(
-        devices.exts[i].props[j].extensionName,
+        phydevs.exts[i].props[j].extensionName,
         VK_KHR_SWAPCHAIN_EXTENSION_NAME
       )) {
         success = 1;
@@ -495,7 +528,7 @@ int init_vk_seldev(
     success = 0;
 
     err = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
-      devices.handles[i],
+      phydevs.handles[i],
       surface.handle,
       &seldev->caps
     );
@@ -503,7 +536,7 @@ int init_vk_seldev(
 
     //Verify at least one surface format
     err = vkGetPhysicalDeviceSurfaceFormatsKHR(
-      devices.handles[i],
+      phydevs.handles[i],
       surface.handle,
       &seldev->formats_count,
       NULL
@@ -513,7 +546,7 @@ int init_vk_seldev(
     seldev->formats = malloc(seldev->formats_count * sizeof(*seldev->formats));
     if(!seldev->formats) goto borked_malloc;
     err = vkGetPhysicalDeviceSurfaceFormatsKHR(
-      devices.handles[i],
+      phydevs.handles[i],
       surface.handle,
       &seldev->formats_count,
       seldev->formats
@@ -522,7 +555,7 @@ int init_vk_seldev(
 
     //Verify at least one present mode
     err = vkGetPhysicalDeviceSurfacePresentModesKHR(
-      devices.handles[i],
+      phydevs.handles[i],
       surface.handle,
       &seldev->pmodes_count,
       NULL
@@ -536,24 +569,20 @@ int init_vk_seldev(
     seldev->pmodes = malloc(seldev->pmodes_count * sizeof(*seldev->pmodes));
     if(!seldev->pmodes) goto borked_malloc;
     err = vkGetPhysicalDeviceSurfacePresentModesKHR(
-      devices.handles[i],
+      phydevs.handles[i],
       surface.handle,
       &seldev->pmodes_count,
       seldev->pmodes
     );
     if(err != VK_SUCCESS) goto borked;
 
-    seldev->handle = devices.handles[i];
-    seldev->dev_props = devices.props[i];
-    seldev->feats = devices.feats[i];
+    seldev->handle = phydevs.handles[i];
+    seldev->dev_props = phydevs.props[i];
+    seldev->feats = phydevs.feats[i];
     success = 1;
     break;
   }
-  if(success) log_debug(
-    "Selected device: %s qfam: %d",
-    seldev->dev_props.deviceName,
-    seldev->qfam_idx
-  );
+  if(success) log_debug("Selected device: %s", seldev->dev_props.deviceName);
 
   return success ? VGFX_SUCCESS : VGFX_FAIL;
   borked_malloc:
@@ -575,34 +604,79 @@ int init_vk_logicdev(
   vk_logicdev_t *logicdev,
   vk_seldev_t seldev
 ) {
+  uint32_t create_info_count;
+  VkDeviceQueueCreateInfo *create_info;
+  logicdev->gfx_qfam = seldev.gfx_qfam;
+  logicdev->xfr_qfam = seldev.xfr_qfam;
+  //Device doesn't support dedicated transfer queue
+  if(seldev.gfx_qfam == seldev.xfr_qfam) {
+    logicdev->single_qfam = 1;
+    create_info_count = 1;
+    create_info = &(VkDeviceQueueCreateInfo) {
+      .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+      .pNext = NULL,
+      .flags = 0,
+      .queueFamilyIndex = seldev.gfx_qfam,
+      .queueCount = 2,
+      .pQueuePriorities = &(const float) {1.0}
+    };
+    //Worst case scenario, transfers will be done on main graphics queue
+    if(seldev.gfx_props.queueCount == 1) {
+      create_info->queueCount = 1;
+      logicdev->unified_q = 1;
+    }
+  } else {
+    logicdev->single_qfam = 0;
+    create_info_count = 2;
+    create_info = (VkDeviceQueueCreateInfo[]) {
+      {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .queueFamilyIndex = seldev.gfx_qfam,
+        .queueCount = 1,
+        .pQueuePriorities = &(const float) {1.0}
+      },
+      {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+        .queueFamilyIndex = seldev.xfr_qfam,
+        .queueCount = 1,
+        .pQueuePriorities = &(const float) {1.0}
+      }
+    };
+  }
   VkResult err = vkCreateDevice(
     seldev.handle,
     &(const VkDeviceCreateInfo) {
       .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
       .pNext = NULL,
       .flags = 0,
-      .queueCreateInfoCount = 1,
-      .pQueueCreateInfos = &(const VkDeviceQueueCreateInfo) {
-        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .pNext = NULL,
-        .flags = 0,
-        .queueFamilyIndex = seldev.qfam_idx,
-        .queueCount = 1,
-        .pQueuePriorities = &(const float) {1.0}
-      },
+      .queueCreateInfoCount = create_info_count,
+      .pQueueCreateInfos = create_info,
       .enabledLayerCount = 0,
       .ppEnabledLayerNames = NULL,
       .enabledExtensionCount = 1,
       .ppEnabledExtensionNames = &(const char *const) {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME
       },
+      //ToDo: Don't just enable all features
       .pEnabledFeatures = &seldev.feats
     },
     NULL,
     &logicdev->handle
   );
   if(err != VK_SUCCESS) goto borked;
-  vkGetDeviceQueue(logicdev->handle, seldev.qfam_idx, 0, &logicdev->q);
+
+  vkGetDeviceQueue(logicdev->handle, seldev.gfx_qfam, 0, &logicdev->gfx_q);
+  if(logicdev->unified_q) {
+    logicdev->xfr_q = logicdev->gfx_q;
+  } else if(seldev.xfr_qfam == seldev.gfx_qfam) {
+    vkGetDeviceQueue(logicdev->handle, seldev.xfr_qfam, 1, &logicdev->xfr_q);
+  } else {
+    vkGetDeviceQueue(logicdev->handle, seldev.xfr_qfam, 0, &logicdev->xfr_q);
+  }
 
   return VGFX_SUCCESS;
   borked:
@@ -623,6 +697,8 @@ int init_vk_swapchain(
   swapchain->image_handles = NULL;
   swapchain->logicdev = logicdev;
   VkColorSpaceKHR color_space;
+
+  //1 & format undefined mean "use whatever"
   if(
     seldev.formats_count == 1 &&
     seldev.formats[0].format == VK_FORMAT_UNDEFINED
@@ -630,6 +706,8 @@ int init_vk_swapchain(
     swapchain->image_format = VK_FORMAT_B8G8R8A8_UNORM;
     color_space = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
   } else {
+    //We want rgba8 and srgb nonlinear, if that fails we'll just grab whatever
+    //the first listed color format and space are
     swapchain->image_format = seldev.formats[0].format;
     color_space = seldev.formats[0].colorSpace;
     for(unsigned int i = 0; i < seldev.formats_count; i++) {
@@ -644,15 +722,18 @@ int init_vk_swapchain(
     }
   }
 
+  //Spec requires this always be available
   VkPresentModeKHR pmode = VK_PRESENT_MODE_FIFO_KHR;
   for(unsigned int i = 0; i < seldev.pmodes_count; i++) {
     log_trace(
       "Discovered the following Present Mode: %s",
       pmode2str(seldev.pmodes[i])
     );
+    //Prefered mode, allows triple buffering and vsync
     if(seldev.pmodes[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
       pmode = VK_PRESENT_MODE_MAILBOX_KHR;
       break;
+    //Second choice, just blit images as fast as possible
     } else if(seldev.pmodes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR)
       pmode = VK_PRESENT_MODE_IMMEDIATE_KHR;
   }
@@ -971,10 +1052,29 @@ int init_vk_gpipe(
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         .pNext = NULL,
         .flags = 0,
-        .vertexBindingDescriptionCount = 0,
-        .pVertexBindingDescriptions = NULL,
-        .vertexAttributeDescriptionCount = 0,
-        .pVertexAttributeDescriptions = NULL
+        .vertexBindingDescriptionCount = 1,
+        .pVertexBindingDescriptions =
+          &(const VkVertexInputBindingDescription) {
+            .binding = 0,
+            .stride = sizeof(*vertices),
+            .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+          },
+        .vertexAttributeDescriptionCount = 2,
+        .pVertexAttributeDescriptions =
+          (const VkVertexInputAttributeDescription[]) {
+            {
+              .location = 0,
+              .binding = 0,
+              .format = VK_FORMAT_R32G32_SFLOAT,
+              .offset = offsetof(vgfx_vertex, pos)
+            },
+            {
+              .location = 1,
+              .binding = 0,
+              .format = VK_FORMAT_R32G32B32_SFLOAT,
+              .offset = offsetof(vgfx_vertex, color)
+            }
+          }
       },
       .pInputAssemblyState = &(const VkPipelineInputAssemblyStateCreateInfo) {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
@@ -1144,32 +1244,403 @@ void destroy_vk_framebuffers(vk_framebuffers_t framebuffers) {
   free(framebuffers.handles);
 }
 
-int init_vk_commandpool(
-  vk_commandpool_t *commandpool,
+int init_vk_commandpools(
+  vk_commandpools_t *commandpools,
   vk_seldev_t seldev,
   vk_logicdev_t logicdev
 ) {
-  commandpool->logicdev = logicdev;
+  VkCommandPoolCreateInfo info = {
+    .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+    .pNext = NULL,
+    .flags = 0,
+    .queueFamilyIndex = seldev.gfx_qfam
+  };
+  commandpools->logicdev = logicdev;
   VkResult err = vkCreateCommandPool(
     logicdev.handle,
-    &(const VkCommandPoolCreateInfo) {
-      .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-      .pNext = NULL,
-      .flags = 0,
-      .queueFamilyIndex = seldev.qfam_idx
-    },
+    &info,
     NULL,
-    &commandpool->handle
+    &commandpools->gfx_handle
   );
-  if(err != VK_SUCCESS) {
+  if(err != VK_SUCCESS) goto borked;
+  if(logicdev.unified_q) {
+    commandpools->xfr_handle = commandpools->gfx_handle;
+  } else {
+    info.queueFamilyIndex = seldev.xfr_qfam;
+    info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    err = vkCreateCommandPool(
+      logicdev.handle,
+      &info,
+      NULL,
+      &commandpools->xfr_handle
+    );
+    if(err != VK_SUCCESS) {
+      vkDestroyCommandPool(logicdev.handle, commandpools->gfx_handle, NULL);
+      goto borked;
+    }
+  }
+  return VGFX_SUCCESS;
+  borked:
     log_error("Failed to init commandpool on: %s", vkr2str(err));
     return VGFX_FAIL;
+}
+
+void destroy_vk_commandpools(vk_commandpools_t commandpools) {
+  vkDestroyCommandPool(
+    commandpools.logicdev.handle, commandpools.gfx_handle, NULL
+  );
+  if(!commandpools.logicdev.unified_q) {
+    vkDestroyCommandPool(
+      commandpools.logicdev.handle, commandpools.xfr_handle, NULL
+    );
   }
+}
+
+//begin_single is specifically for one-off buffers
+int get_command_buffer(vk_combuf_t *combuf, int begin_single) {
+  VkResult err = vkAllocateCommandBuffers(
+    combuf->dev,
+    &(const VkCommandBufferAllocateInfo) {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+      .pNext = NULL,
+      .commandPool = combuf->cpool,
+      .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+      .commandBufferCount = 1,
+    },
+    &combuf->buf
+  );
+  if(err != VK_SUCCESS) goto borked;
+  if(begin_single) {
+    err = vkBeginCommandBuffer(
+      combuf->buf,
+      &(const VkCommandBufferBeginInfo) {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = NULL,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        .pInheritanceInfo = NULL
+      }
+    );
+    if(err != VK_SUCCESS) {
+      vkFreeCommandBuffers(combuf->dev, combuf->cpool, 1, &combuf->buf);
+      goto borked;
+    }
+  }
+  return VGFX_SUCCESS;
+  borked:
+    log_error("Failed to get combuf on: %s", vkr2str(err));
+    return VGFX_FAIL;
+}
+
+int flush_command_buffer(vk_combuf_t combuf) {
+  VkResult err = vkEndCommandBuffer(combuf.buf);
+  if(err != VK_SUCCESS) goto borked;
+  VkFence fence;
+  err = vkCreateFence(
+    combuf.dev,
+    &(const VkFenceCreateInfo) {
+      .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+      .pNext = NULL,
+      .flags = 0
+    },
+    NULL,
+    &fence
+  );
+  if(err != VK_SUCCESS) goto borked;
+  err = vkQueueSubmit(
+    combuf.q,
+    1,
+    &(const VkSubmitInfo) {
+      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+      .pNext = NULL,
+      .waitSemaphoreCount = 0,
+      .pWaitSemaphores = NULL,
+      .pWaitDstStageMask = NULL,
+      .commandBufferCount = 1,
+      .pCommandBuffers = &combuf.buf,
+      .signalSemaphoreCount = 0,
+      .pSignalSemaphores = NULL
+    },
+    fence
+  );
+  if(err != VK_SUCCESS) goto borked_submit;
+  err = vkWaitForFences(combuf.dev, 1, &fence, VK_TRUE, UINT64_MAX);
+  if(err != VK_SUCCESS) goto borked_submit;
+
+  vkDestroyFence(combuf.dev, fence, NULL);
+  vkFreeCommandBuffers(combuf.dev, combuf.cpool, 1, &combuf.buf);
+  return VGFX_SUCCESS;
+  borked_submit:
+    vkDestroyFence(combuf.dev, fence, NULL);
+  borked:
+    vkFreeCommandBuffers(combuf.dev, combuf.cpool, 1, &combuf.buf);
+    log_error("Failed to flush combuf on: %s", vkr2str(err));
+    return VGFX_FAIL;
+}
+
+//Basically this:
+//https://github.com/KhronosGroup/Vulkan-Docs/wiki/Synchronization-Examples
+//Holy shit this function got out of control
+//For vertex buffers:
+//  usage: VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
+//  dst_access: VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT
+//For index buffers:
+//  usage: VK_BUFFER_USAGE_INDEX_BUFFER_BIT
+//  dst_access: VK_ACCESS_INDEX_READ_BIT
+int build_and_copy_buf(
+  vk_buffer_t *local_buf,
+  const void *data,
+  VkDeviceSize size,
+  VkBufferUsageFlags usage,
+  VkAccessFlags dst_access,
+  VmaAllocator allocator,
+  vk_commandpools_t cpools
+) {
+  VkBufferCreateInfo buf_info = {
+    .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+    .pNext = NULL,
+    .flags = 0,
+    .size = size,
+    .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    .queueFamilyIndexCount = 0,
+    .pQueueFamilyIndices = NULL
+  };
+  VmaAllocationCreateInfo vma_info = {
+    .flags = 0,
+    //Guaranteed to be HOST_VISIBLE and HOST_COHERENT
+    .usage = VMA_MEMORY_USAGE_CPU_ONLY,
+    .requiredFlags = 0,
+    .preferredFlags = 0,
+    .memoryTypeBits = 0,
+    .pool = VK_NULL_HANDLE,
+    .pUserData = NULL
+  };
+  //ToDo: Create a static buffer for these transfers and leave it mapped
+  //instead of constantly reallocating and mapping a new one everytime we do a
+  //transfer. Consider VMA_ALLOCATION_CREATE_MAPPED_BIT
+  vk_buffer_t host_buf;
+  VkResult err = vmaCreateBuffer(
+    allocator,
+    &buf_info,
+    &vma_info,
+    &host_buf.handle,
+    &host_buf.alloc,
+    NULL
+  );
+  if(err != VK_SUCCESS) goto borked;
+
+  void *host_mem;
+  //ToDo: Error check this?
+  vmaMapMemory(allocator, host_buf.alloc, &host_mem);
+  memcpy(host_mem, data, size);
+  vmaUnmapMemory(allocator, host_buf.alloc);
+
+  buf_info.usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+  vma_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+
+  err = vmaCreateBuffer(
+    allocator,
+    &buf_info,
+    &vma_info,
+    &local_buf->handle,
+    &local_buf->alloc,
+    NULL
+  );
+  if(err != VK_SUCCESS) {
+    vmaDestroyBuffer(allocator, host_buf.handle, host_buf.alloc);
+    goto borked;
+  }
+
+  vk_combuf_t xfr_combuf = {
+    .dev = cpools.logicdev.handle,
+    .q = cpools.logicdev.xfr_q,
+    .cpool = cpools.xfr_handle,
+  };
+  if(get_command_buffer(&xfr_combuf, 1)) {
+    err = VK_RESULT_MAX_ENUM;
+    goto borked_buffers;
+  }
+  vkCmdCopyBuffer(
+    xfr_combuf.buf,
+    host_buf.handle,
+    local_buf->handle,
+    1,
+    &(const VkBufferCopy) {
+      .srcOffset = 0,
+      .dstOffset = 0,
+      .size = size
+    }
+  );
+
+  VkSemaphore semaphore;
+  VkFence fence;
+  if(cpools.logicdev.single_qfam) {
+    if(flush_command_buffer(xfr_combuf)) {
+      err = VK_RESULT_MAX_ENUM;
+      goto borked_buffers;
+    }
+  } else {
+    vkCmdPipelineBarrier(
+      xfr_combuf.buf,
+      VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+      0, 0, NULL, 1,
+      &(const VkBufferMemoryBarrier) {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .pNext = NULL,
+        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = 0,
+        .srcQueueFamilyIndex = cpools.logicdev.xfr_qfam,
+        .dstQueueFamilyIndex = cpools.logicdev.gfx_qfam,
+        .buffer = local_buf->handle,
+        .offset = 0,
+        .size = size
+      },
+      0, NULL
+    );
+    err = vkEndCommandBuffer(xfr_combuf.buf);
+    if(err != VK_SUCCESS) goto borked_xfrbuf;
+
+    err = vkCreateSemaphore(
+      cpools.logicdev.handle,
+      &(const VkSemaphoreCreateInfo) {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0
+      },
+      NULL,
+      &semaphore
+    );
+    if(err != VK_SUCCESS) goto borked_xfrbuf;
+    err = vkQueueSubmit(
+      cpools.logicdev.xfr_q,
+      1,
+      &(const VkSubmitInfo) {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = NULL,
+        .waitSemaphoreCount = 0,
+        .pWaitSemaphores = NULL,
+        .pWaitDstStageMask = NULL,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &xfr_combuf.buf,
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &semaphore
+      },
+      VK_NULL_HANDLE
+    );
+    if(err != VK_SUCCESS) goto borked_semaphore;
+
+    vk_combuf_t gfx_combuf = {
+      .dev = cpools.logicdev.handle,
+      .q = cpools.logicdev.gfx_q,
+      .cpool = cpools.gfx_handle,
+    };
+    if(get_command_buffer(&gfx_combuf, 1)) {
+      err = VK_RESULT_MAX_ENUM;
+      goto borked_semaphore;
+    }
+    vkCmdPipelineBarrier(
+      gfx_combuf.buf,
+      VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+      VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+      0, 0, NULL, 1,
+      &(const VkBufferMemoryBarrier) {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .pNext = NULL,
+        .srcAccessMask = 0,
+        .dstAccessMask = dst_access,
+        .srcQueueFamilyIndex = cpools.logicdev.xfr_qfam,
+        .dstQueueFamilyIndex = cpools.logicdev.gfx_qfam,
+        .buffer = local_buf->handle,
+        .offset = 0,
+        .size = size
+      },
+      0, NULL
+    );
+    //ToDo: This fence is necessary because we want to destroy the command
+    //buffers when we're done, but if we used the command buffers statically
+    //we wouldn't need to destroy them and we wouldn't need to sync before
+    //moving on because the memory barrier handles that for us.
+    err = vkCreateFence(
+      cpools.logicdev.handle,
+      &(const VkFenceCreateInfo) {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0
+      },
+      NULL,
+      &fence
+    );
+    if(err != VK_SUCCESS) goto borked_gfxbuf;
+
+    err = vkEndCommandBuffer(gfx_combuf.buf);
+    if(err != VK_SUCCESS) goto borked_fence;
+    err = vkQueueSubmit(
+      cpools.logicdev.gfx_q,
+      1,
+      &(const VkSubmitInfo) {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = NULL,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &semaphore,
+        .pWaitDstStageMask = &dst_access,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &gfx_combuf.buf,
+        .signalSemaphoreCount = 0,
+        .pSignalSemaphores = NULL
+      },
+      fence
+    );
+    if(err != VK_SUCCESS) goto borked_fence;
+    err = vkWaitForFences(gfx_combuf.dev, 1, &fence, VK_TRUE, UINT64_MAX);
+    if(err != VK_SUCCESS) goto borked_fence;
+
+    vkFreeCommandBuffers(xfr_combuf.dev, xfr_combuf.cpool, 1, &xfr_combuf.buf);
+    vkFreeCommandBuffers(gfx_combuf.dev, gfx_combuf.cpool, 1, &gfx_combuf.buf);
+    vkDestroyFence(cpools.logicdev.handle, fence, NULL);
+    vkDestroySemaphore(cpools.logicdev.handle, semaphore, NULL);
+  }
+
+  vmaDestroyBuffer(allocator, host_buf.handle, host_buf.alloc);
+  return VGFX_SUCCESS;
+  borked_fence:
+    vkDestroyFence(cpools.logicdev.handle, fence, NULL);
+  borked_gfxbuf:
+    vkFreeCommandBuffers(xfr_combuf.dev, xfr_combuf.cpool, 1, &xfr_combuf.buf);
+  borked_semaphore:
+    vkDestroySemaphore(cpools.logicdev.handle, semaphore, NULL);
+  borked_xfrbuf:
+    vkFreeCommandBuffers(xfr_combuf.dev, xfr_combuf.cpool, 1, &xfr_combuf.buf);
+  borked_buffers:
+    vmaDestroyBuffer(allocator, host_buf.handle, host_buf.alloc);
+    vmaDestroyBuffer(allocator, local_buf->handle, local_buf->alloc);
+  borked:
+    if(err != VK_RESULT_MAX_ENUM)
+      log_error("Failed to build and copy local buffer on: %s", vkr2str(err));
+    return VGFX_FAIL;
+}
+
+//Lol this fucking thing
+int init_vk_vertexbuffer(
+  vk_vertexbuffer_t *vbuf,
+  VmaAllocator allocator,
+  vk_commandpools_t cpools
+) {
+  vbuf->allocator = allocator;
+  if(build_and_copy_buf(
+    &vbuf->buf,
+    vertices,
+    vertices_size,
+    VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+    VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+    allocator,
+    cpools
+  )) return VGFX_FAIL;
   return VGFX_SUCCESS;
 }
 
-void destroy_vk_commandpool(vk_commandpool_t commandpool) {
-  vkDestroyCommandPool(commandpool.logicdev.handle, commandpool.handle, NULL);
+void destroy_vk_vertexbuffer(vk_vertexbuffer_t vbuf) {
+  vmaDestroyBuffer(vbuf.allocator, vbuf.buf.handle, vbuf.buf.alloc);
 }
 
 //This should probably be split into two functions, one for pure instantiation
@@ -1180,7 +1651,8 @@ int init_vk_commandbuffers(
   vk_renderpass_t renderpass,
   vk_gpipe_t gpipe,
   vk_framebuffers_t framebuffers,
-  vk_commandpool_t commandpool
+  vk_commandpools_t commandpools,
+  vk_vertexbuffer_t vbuf
 ) {
   commandbuffers->count = swapchain.image_count;
   commandbuffers->handles = malloc(
@@ -1191,11 +1663,11 @@ int init_vk_commandbuffers(
     return VGFX_MEM_FAIL;
   }
   VkResult err = vkAllocateCommandBuffers(
-    commandpool.logicdev.handle,
+    commandpools.logicdev.handle,
     &(const VkCommandBufferAllocateInfo) {
       .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
       .pNext = NULL,
-      .commandPool = commandpool.handle,
+      .commandPool = commandpools.gfx_handle,
       .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
       .commandBufferCount = commandbuffers->count
     },
@@ -1240,7 +1712,13 @@ int init_vk_commandbuffers(
       VK_PIPELINE_BIND_POINT_GRAPHICS,
       gpipe.handle
     );
-    vkCmdDraw(commandbuffers->handles[i], 3, 1, 0, 0);
+    vkCmdBindVertexBuffers(
+      commandbuffers->handles[i],
+      0, 1,
+      &vbuf.buf.handle,
+      &(const VkDeviceSize) {0}
+    );
+    vkCmdDraw(commandbuffers->handles[i], vertices_len, 1, 0, 0);
     vkCmdEndRenderPass(commandbuffers->handles[i]);
     err = vkEndCommandBuffer(commandbuffers->handles[i]);
     if(err != VK_SUCCESS) goto borked;
@@ -1381,17 +1859,35 @@ int init_vk(vgfx_vk_t *vk, GLFWwindow *window, uint32_t max_fif) {
     log_error("Failed to init surface");
     goto cleanup_instance;
   }
-  if(init_vk_devices(&vk->devices, vk->instance)) {
-    log_error("Failed to init devices");
+  if(init_vk_phydevs(&vk->phydevs, vk->instance)) {
+    log_error("Failed to init physical devices");
     goto cleanup_surface;
   }
-  if(init_vk_seldev(&vk->seldev, vk->devices, vk->surface)) {
+  if(init_vk_seldev(&vk->seldev, vk->phydevs, vk->surface)) {
     log_error("Failed to init seldev");
-    goto cleanup_devices;
+    goto cleanup_phydevs;
   }
   if(init_vk_logicdev(&vk->logicdev, vk->seldev)) {
     log_error("Failed to init logicdev");
     goto cleanup_seldev;
+  }
+  if(vmaCreateAllocator(
+    &(const VmaAllocatorCreateInfo) {
+      .flags = 0,
+      .physicalDevice = vk->seldev.handle,
+      .device = vk->logicdev.handle,
+      .preferredLargeHeapBlockSize = 0,
+      .pAllocationCallbacks = NULL,
+      .pDeviceMemoryCallbacks = NULL,
+      .frameInUseCount = 0,
+      .pHeapSizeLimit = NULL,
+      .pVulkanFunctions = NULL,
+      .pRecordSettings = NULL,
+    },
+    &vk->allocator
+  ) != VK_SUCCESS) {
+    log_error("Failed to init allocator");
+    goto cleanup_logicdev;
   }
   if(init_vk_swapchain(
     &vk->swapchain,
@@ -1400,7 +1896,7 @@ int init_vk(vgfx_vk_t *vk, GLFWwindow *window, uint32_t max_fif) {
     vk->logicdev
   )) {
     log_error("Failed to init swapchain");
-    goto cleanup_logicdev;
+    goto cleanup_allocator;
   }
   if(init_vk_imageviews(&vk->imageviews, vk->swapchain)) {
     log_error("Failed to init imageviews");
@@ -1423,9 +1919,17 @@ int init_vk(vgfx_vk_t *vk, GLFWwindow *window, uint32_t max_fif) {
     log_error("Failed to init framebuffers");
     goto cleanup_gpipe;
   }
-  if(init_vk_commandpool(&vk->commandpool, vk->seldev, vk->logicdev)) {
+  if(init_vk_commandpools(&vk->commandpools, vk->seldev, vk->logicdev)) {
     log_error("Failed to init commandpool");
     goto cleanup_framebuffers;
+  }
+  if(init_vk_vertexbuffer(
+    &vk->vertexbuffer,
+    vk->allocator,
+    vk->commandpools
+  )) {
+    log_error("Failed to init vertexbuffer");
+    goto cleanup_commandpools;
   }
   if(init_vk_commandbuffers(
     &vk->commandbuffers,
@@ -1433,10 +1937,11 @@ int init_vk(vgfx_vk_t *vk, GLFWwindow *window, uint32_t max_fif) {
     vk->renderpass,
     vk->gpipe,
     vk->framebuffers,
-    vk->commandpool
+    vk->commandpools,
+    vk->vertexbuffer
   )) {
     log_error("Failed to init commandbuffers");
-    goto cleanup_commandpool;
+    goto cleanup_vertexbuffer;
   }
   if(init_vk_syncobjects(&vk->syncobjects, vk->max_fif, vk->logicdev)) {
     log_error("Failed to init syncobjects");
@@ -1446,8 +1951,10 @@ int init_vk(vgfx_vk_t *vk, GLFWwindow *window, uint32_t max_fif) {
   return VGFX_SUCCESS;
   cleanup_commandbuffers:
     destroy_vk_commandbuffers(vk->commandbuffers);
-  cleanup_commandpool:
-    destroy_vk_commandpool(vk->commandpool);
+  cleanup_vertexbuffer:
+    destroy_vk_vertexbuffer(vk->vertexbuffer);
+  cleanup_commandpools:
+    destroy_vk_commandpools(vk->commandpools);
   cleanup_framebuffers:
     destroy_vk_framebuffers(vk->framebuffers);
   cleanup_gpipe:
@@ -1458,12 +1965,14 @@ int init_vk(vgfx_vk_t *vk, GLFWwindow *window, uint32_t max_fif) {
     destroy_vk_imageviews(vk->imageviews);
   cleanup_swapchain:
     destroy_vk_swapchain(vk->swapchain);
+  cleanup_allocator:
+    vmaDestroyAllocator(vk->allocator);
   cleanup_logicdev:
     destroy_vk_logicdev(vk->logicdev);
   cleanup_seldev:
     destroy_vk_seldev(vk->seldev);
-  cleanup_devices:
-    destroy_vk_devices(vk->devices);
+  cleanup_phydevs:
+    destroy_vk_phydevs(vk->phydevs);
   cleanup_surface:
     destroy_vk_surface(vk->surface, vk->instance);
   cleanup_instance:
@@ -1473,16 +1982,18 @@ int init_vk(vgfx_vk_t *vk, GLFWwindow *window, uint32_t max_fif) {
 
 void destroy_vk(vgfx_vk_t vk) {
   destroy_vk_syncobjects(vk.syncobjects);
+  destroy_vk_vertexbuffer(vk.vertexbuffer);
   destroy_vk_commandbuffers(vk.commandbuffers);
-  destroy_vk_commandpool(vk.commandpool);
+  destroy_vk_commandpools(vk.commandpools);
   destroy_vk_framebuffers(vk.framebuffers);
   destroy_vk_gpipe(vk.gpipe);
   destroy_vk_renderpass(vk.renderpass);
   destroy_vk_imageviews(vk.imageviews);
   destroy_vk_swapchain(vk.swapchain);
+  vmaDestroyAllocator(vk.allocator);
   destroy_vk_logicdev(vk.logicdev);
   destroy_vk_seldev(vk.seldev);
-  destroy_vk_devices(vk.devices);
+  destroy_vk_phydevs(vk.phydevs);
   destroy_vk_surface(vk.surface, vk.instance);
   destroy_vk_instance(vk.instance);
 }
@@ -1500,7 +2011,7 @@ int rebuild_vk_swapchain(vgfx_vk_t *vk) {
   //buffers before freeing the handles.
   vkFreeCommandBuffers(
     vk->logicdev.handle,
-    vk->commandpool.handle,
+    vk->commandpools.gfx_handle,
     vk->commandbuffers.count,
     vk->commandbuffers.handles
   );
@@ -1543,7 +2054,8 @@ int rebuild_vk_swapchain(vgfx_vk_t *vk) {
     vk->renderpass,
     vk->gpipe,
     vk->framebuffers,
-    vk->commandpool
+    vk->commandpools,
+    vk->vertexbuffer
   )) goto cleanup_framebuffers;
   return VGFX_SUCCESS;
 
