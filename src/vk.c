@@ -606,50 +606,42 @@ int init_vk_logicdev(
 	vk_seldev_t seldev
 ) {
 	const float *priorities = &(const float) {1.0};
-	uint32_t create_info_count;
-	VkDeviceQueueCreateInfo *create_info;
-	logicdev->gfx_qfam = seldev.gfx_qfam;
-	logicdev->xfr_qfam = seldev.xfr_qfam;
-	logicdev->unified_q = 0;
-	//Device doesn't support dedicated transfer queue
-	if(seldev.gfx_qfam == seldev.xfr_qfam) {
-		logicdev->single_qfam = 1;
-		create_info_count = 1;
-		create_info = &(VkDeviceQueueCreateInfo) {
+	VkDeviceQueueCreateInfo *create_info = (VkDeviceQueueCreateInfo[]) {
+		{
 			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
 			.pNext = NULL,
 			.flags = 0,
 			.queueFamilyIndex = seldev.gfx_qfam,
-			.queueCount = 2,
+			.queueCount = 1,
 			.pQueuePriorities = priorities
-		};
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+			.pNext = NULL,
+			.flags = 0,
+			.queueFamilyIndex = seldev.xfr_qfam,
+			.queueCount = 1,
+			.pQueuePriorities = priorities
+		}
+	};
+	uint32_t create_info_count = 2;
+	logicdev->gfx_qfam = seldev.gfx_qfam;
+	logicdev->xfr_qfam = seldev.xfr_qfam;
+	logicdev->single_qfam = 0;
+	logicdev->unified_q = 0;
+
+	//Device doesn't support dedicated transfer queue
+	if(seldev.gfx_qfam == seldev.xfr_qfam) {
+		logicdev->single_qfam = 1;
+		create_info_count = 1;
 		//Worst case scenario, transfers will be done on main graphics queue
 		if(seldev.gfx_props.queueCount == 1) {
-			create_info->queueCount = 1;
 			logicdev->unified_q = 1;
+		} else {
+			create_info[0].queueCount = 2;
 		}
-	} else {
-		logicdev->single_qfam = 0;
-		create_info_count = 2;
-		create_info = (VkDeviceQueueCreateInfo[]) {
-			{
-				.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-				.pNext = NULL,
-				.flags = 0,
-				.queueFamilyIndex = seldev.gfx_qfam,
-				.queueCount = 1,
-				.pQueuePriorities = priorities
-			},
-			{
-				.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-				.pNext = NULL,
-				.flags = 0,
-				.queueFamilyIndex = seldev.xfr_qfam,
-				.queueCount = 1,
-				.pQueuePriorities = priorities
-			}
-		};
 	}
+
 	VkResult err = vkCreateDevice(
 		seldev.handle,
 		&(const VkDeviceCreateInfo) {
