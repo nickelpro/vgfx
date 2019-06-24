@@ -229,6 +229,7 @@ int get_vk_validation(uint32_t *layer_count, VkLayerProperties *layer_props) {
 }
 
 int init_vk_instance(vk_instance_t *instance, int use_validation) {
+	const char ** vlayer_name = &(const char *) {"VK_LAYER_KHRONOS_validation"};
 	log_debug("Creating vulkan instance");
 	struct {
 		uint32_t count;
@@ -250,7 +251,7 @@ int init_vk_instance(vk_instance_t *instance, int use_validation) {
 		free(layer_props);
 		if(ret == VGFX_SUCCESS) {
 			layers.count = 1;
-			layers.names = &(const char *) {"VK_LAYER_KHRONOS_validation"};
+			layers.names = vlayer_name;
 			tot_exts.names = malloc(++tot_exts.count * sizeof(*tot_exts.names));
 			if(!tot_exts.names) {
 				log_error("Failed to allocate memory for tot_exts.names");
@@ -604,10 +605,12 @@ int init_vk_logicdev(
 	vk_logicdev_t *logicdev,
 	vk_seldev_t seldev
 ) {
+	const float *priorities = &(const float) {1.0};
 	uint32_t create_info_count;
 	VkDeviceQueueCreateInfo *create_info;
 	logicdev->gfx_qfam = seldev.gfx_qfam;
 	logicdev->xfr_qfam = seldev.xfr_qfam;
+	logicdev->unified_q = 0;
 	//Device doesn't support dedicated transfer queue
 	if(seldev.gfx_qfam == seldev.xfr_qfam) {
 		logicdev->single_qfam = 1;
@@ -618,7 +621,7 @@ int init_vk_logicdev(
 			.flags = 0,
 			.queueFamilyIndex = seldev.gfx_qfam,
 			.queueCount = 2,
-			.pQueuePriorities = &(const float) {1.0}
+			.pQueuePriorities = priorities
 		};
 		//Worst case scenario, transfers will be done on main graphics queue
 		if(seldev.gfx_props.queueCount == 1) {
@@ -635,7 +638,7 @@ int init_vk_logicdev(
 				.flags = 0,
 				.queueFamilyIndex = seldev.gfx_qfam,
 				.queueCount = 1,
-				.pQueuePriorities = &(const float) {1.0}
+				.pQueuePriorities = priorities
 			},
 			{
 				.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
@@ -643,7 +646,7 @@ int init_vk_logicdev(
 				.flags = 0,
 				.queueFamilyIndex = seldev.xfr_qfam,
 				.queueCount = 1,
-				.pQueuePriorities = &(const float) {1.0}
+				.pQueuePriorities = priorities
 			}
 		};
 	}
@@ -1643,6 +1646,28 @@ void destroy_vk_vertexbuffer(vk_vertexbuffer_t vbuf) {
 	vmaDestroyBuffer(vbuf.allocator, vbuf.buf.handle, vbuf.buf.alloc);
 }
 
+int init_vk_indexbuffer(
+	vk_indexbuffer_t *ibuf,
+	VmaAllocator allocator,
+	vk_commandpools_t cpools
+) {
+	ibuf->allocator = allocator;
+	if(build_and_copy_buf(
+		&ibuf->buf,
+		indices,
+		indices_size,
+		VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+		VK_ACCESS_INDEX_READ_BIT,
+		allocator,
+		cpools
+	)) return VGFX_FAIL;
+	return VGFX_SUCCESS;
+}
+
+void destroy_vk_indexbuffer(vk_indexbuffer_t ibuf) {
+	vmaDestroyBuffer(ibuf.allocator, ibuf.buf.handle, ibuf.buf.alloc);
+}
+
 //This should probably be split into two functions, one for pure instantiation
 //and the other for all the draw stuff.
 int init_vk_commandbuffers(
@@ -1652,7 +1677,8 @@ int init_vk_commandbuffers(
 	vk_gpipe_t gpipe,
 	vk_framebuffers_t framebuffers,
 	vk_commandpools_t commandpools,
-	vk_vertexbuffer_t vbuf
+	vk_vertexbuffer_t vbuf,
+	vk_indexbuffer_t ibuf
 ) {
 	commandbuffers->count = swapchain.image_count;
 	commandbuffers->handles = malloc(
@@ -1718,7 +1744,13 @@ int init_vk_commandbuffers(
 			&vbuf.buf.handle,
 			&(const VkDeviceSize) {0}
 		);
-		vkCmdDraw(commandbuffers->handles[i], vertices_len, 1, 0, 0);
+		vkCmdBindIndexBuffer(
+			commandbuffers->handles[i],
+			ibuf.buf.handle,
+			0,
+			VK_INDEX_TYPE_UINT16
+		);
+		vkCmdDrawIndexed(commandbuffers->handles[i], indices_len, 1, 0, 0, 0);
 		vkCmdEndRenderPass(commandbuffers->handles[i]);
 		err = vkEndCommandBuffer(commandbuffers->handles[i]);
 		if(err != VK_SUCCESS) goto borked;
@@ -1931,6 +1963,14 @@ int init_vk(vgfx_vk_t *vk, GLFWwindow *window, uint32_t max_fif) {
 		log_error("Failed to init vertexbuffer");
 		goto cleanup_commandpools;
 	}
+	if(init_vk_indexbuffer(
+		&vk->indexbuffer,
+		vk->allocator,
+		vk->commandpools
+	)) {
+		log_error("Failed to init indexbuffer");
+		goto cleanup_vertexbuffer;
+	}
 	if(init_vk_commandbuffers(
 		&vk->commandbuffers,
 		vk->swapchain,
@@ -1938,10 +1978,11 @@ int init_vk(vgfx_vk_t *vk, GLFWwindow *window, uint32_t max_fif) {
 		vk->gpipe,
 		vk->framebuffers,
 		vk->commandpools,
-		vk->vertexbuffer
+		vk->vertexbuffer,
+		vk->indexbuffer
 	)) {
 		log_error("Failed to init commandbuffers");
-		goto cleanup_vertexbuffer;
+		goto cleanup_indexbuffer;
 	}
 	if(init_vk_syncobjects(&vk->syncobjects, vk->max_fif, vk->logicdev)) {
 		log_error("Failed to init syncobjects");
@@ -1951,6 +1992,8 @@ int init_vk(vgfx_vk_t *vk, GLFWwindow *window, uint32_t max_fif) {
 	return VGFX_SUCCESS;
 	cleanup_commandbuffers:
 		destroy_vk_commandbuffers(vk->commandbuffers);
+	cleanup_indexbuffer:
+		destroy_vk_indexbuffer(vk->indexbuffer);
 	cleanup_vertexbuffer:
 		destroy_vk_vertexbuffer(vk->vertexbuffer);
 	cleanup_commandpools:
@@ -1982,6 +2025,7 @@ int init_vk(vgfx_vk_t *vk, GLFWwindow *window, uint32_t max_fif) {
 
 void destroy_vk(vgfx_vk_t vk) {
 	destroy_vk_syncobjects(vk.syncobjects);
+	destroy_vk_indexbuffer(vk.indexbuffer);
 	destroy_vk_vertexbuffer(vk.vertexbuffer);
 	destroy_vk_commandbuffers(vk.commandbuffers);
 	destroy_vk_commandpools(vk.commandpools);
@@ -2018,9 +2062,19 @@ int rebuild_vk_swapchain(vgfx_vk_t *vk) {
 	destroy_vk_commandbuffers(vk->commandbuffers);
 	destroy_vk_framebuffers(vk->framebuffers);
 	destroy_vk_imageviews(vk->imageviews);
-	const VkFormat old_format = vk->swapchain.image_format;
+	//const VkFormat old_format = vk->swapchain.image_format;
 	destroy_vk_swapchain(vk->swapchain);
 
+	//Refresh seldev caps before creating the swapchain
+	if(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+			vk->seldev.handle,
+			vk->surface.handle,
+			&vk->seldev.caps
+	)) {
+		destroy_vk_gpipe(vk->gpipe);
+		destroy_vk_renderpass(vk->renderpass);
+		goto borked;
+	}
 	if(init_vk_swapchain(
 		&vk->swapchain,
 		vk->surface,
@@ -2032,14 +2086,16 @@ int rebuild_vk_swapchain(vgfx_vk_t *vk) {
 		goto borked;
 	}
 	//Renderpass and gpipe depend on image formats remaining constant
-	if(vk->swapchain.image_format != old_format) {
+	//It also depends on image extent remaining constant, so for now leave
+	//the if's commented out
+	//if(vk->swapchain.image_format != old_format) {
 		destroy_vk_gpipe(vk->gpipe);
 		destroy_vk_renderpass(vk->renderpass);
 		if(init_vk_renderpass(&vk->renderpass, vk->swapchain))
 			goto cleanup_swapchain;
 		if(init_vk_gpipe(&vk->gpipe, vk->swapchain, vk->renderpass))
 			goto cleanup_renderpass;
-	}
+	//}
 	if(init_vk_imageviews(&vk->imageviews, vk->swapchain))
 		goto cleanup_gpipe;
 	if(init_vk_framebuffers(
@@ -2055,7 +2111,8 @@ int rebuild_vk_swapchain(vgfx_vk_t *vk) {
 		vk->gpipe,
 		vk->framebuffers,
 		vk->commandpools,
-		vk->vertexbuffer
+		vk->vertexbuffer,
+		vk->indexbuffer
 	)) goto cleanup_framebuffers;
 	return VGFX_SUCCESS;
 

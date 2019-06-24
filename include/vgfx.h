@@ -216,6 +216,15 @@ int init_vk_vertexbuffer(
 );
 void destroy_vk_vertexbuffer(vk_vertexbuffer_t vbuf);
 
+typedef vk_vertexbuffer_t vk_indexbuffer_t;
+
+int init_vk_indexbuffer(
+	vk_indexbuffer_t *ibuf,
+	VmaAllocator allocator,
+	vk_commandpools_t cpools
+);
+void destroy_vk_indexbuffer(vk_indexbuffer_t ibuf);
+
 typedef struct {
 	VkDevice dev;
 	VkQueue q;
@@ -239,7 +248,8 @@ int init_vk_commandbuffers(
 	vk_gpipe_t gpipe,
 	vk_framebuffers_t framebuffers,
 	vk_commandpools_t commandpools,
-	vk_vertexbuffer_t vbuf
+	vk_vertexbuffer_t vbuf,
+	vk_indexbuffer_t ibuf
 );
 void destroy_vk_commandbuffers(vk_commandbuffers_t commandbuffers);
 
@@ -274,6 +284,7 @@ typedef struct {
 	vk_framebuffers_t framebuffers;
 	vk_commandpools_t commandpools;
 	vk_vertexbuffer_t vertexbuffer;
+	vk_indexbuffer_t indexbuffer;
 	vk_commandbuffers_t commandbuffers;
 	vk_syncobjects_t syncobjects;
 } vgfx_vk_t;
@@ -291,3 +302,7 @@ typedef struct {
 extern const vgfx_vertex vertices[];
 extern const size_t vertices_size;
 extern const size_t vertices_len;
+
+extern const uint16_t indices[];
+extern const size_t indices_size;
+extern const size_t indices_len;
